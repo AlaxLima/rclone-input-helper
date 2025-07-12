@@ -8,11 +8,50 @@
 #include <limits>
 #include <vector>
 #include <sstream>
+#include <cctype>
+#include <Windows.h>
+#include <algorithm>
 
 bool loop;
 std::string tabLength = "    ";
 
-void disclaimer(){
+std::string execCommand(const std::string &cmd)
+{
+    std::string result;
+    char buffer[128];
+    FILE *pipe = _popen(cmd.c_str(), "r");
+    if (!pipe)
+        return "ERROR";
+
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+    {
+        result += buffer;
+    }
+
+    _pclose(pipe);
+    return result;
+}
+
+void millisecsDelay(int millisecs)
+{
+    std::this_thread::sleep_for(std::chrono::milliseconds(millisecs));
+}
+
+std::vector<std::string> splitByLine(const std::string &input)
+{
+    std::vector<std::string> lines;
+    std::stringstream ss(input);
+    std::string line;
+    while (std::getline(ss, line))
+    {
+        if (!line.empty())
+            lines.push_back(line);
+    }
+    return lines;
+}
+
+void disclaimer()
+{
     std::string note = R"(
          **NOTE** 
     - This program is developed for basic personal use and does not modify the rclone software.
@@ -23,26 +62,30 @@ void disclaimer(){
     std::cout << "\r" << note << "\n";
     std::cout << "\r" << "Press Enter to start using...";
     std::cin.ignore();
-
     system("cls");
 }
 
-int check4rclone(){
-    const char* filename = "rclone.exe";
-    FILE *file;
-    if (file = fopen(filename, "r")){
-        std::cout << "\r" << "Rclone executable present." << "\n";
+bool check4rclone()
+{
+    std::string result = execCommand("rclone version");
+    bool checkResult = result.find("rclone") != std::string::npos && result.find("v") != std::string::npos;
+    if (checkResult)
+    {
+        std::cout << "\r" << "Rclone present." << "\n";
         disclaimer();
-        return 0;
-    }
-    else {
-        std::cout << "\r" << "Unable to locate rclone.exe. Please run this program in the same directory with rclone.exe" << "\n";
         return 1;
+    }
+    else
+    {
+        std::cout << "\r" << "Rclone not found. Please run this program in the same directory with rclone.exe" << "\n";
+        return 0;
     }
 }
 
-int provideOptions(int checked) {
-    std::cout << "\r\n" << "    - rclone basic input utility v.1.0 by LiamKhoi -    " << "\n";
+int provideOptions()
+{
+    std::cout << "\r\n"
+              << "    - rclone basic input utility v.1.0 by LiamKhoi -    " << "\n";
     unsigned int corresWidth = 8;
     std::cout << std::left;
     std::cout << tabLength << std::setw(corresWidth) << "[1]" << "Run remote config" << "\n";
@@ -54,264 +97,345 @@ int provideOptions(int checked) {
     std::cout << tabLength << std::setw(corresWidth) << "[ESC]" << "Quit" << "\n";
 
     std::string ask4option = R"(Press the corresponding key to select)";
-    std::cout << "\n" << ask4option << std::flush;
+    std::cout << "\n"
+              << ask4option << std::flush;
     char optionSelect = _getch();
-    if (optionSelect == 27){
+    if (optionSelect == 27)
+    {
         return 27;
     }
-    else if (optionSelect >= '1' && optionSelect <= '7') {
+    else if (optionSelect >= '1' && optionSelect <= '7')
+    {
         system("cls");
         return optionSelect - '0'; // Convert char to integer
     }
-    else {
+    else
+    {
         return 0;
     }
 }
 
-void millisecsDelay(int millisecs){
-    std::this_thread::sleep_for(std::chrono::milliseconds(millisecs));
-}
-
-//output parsing
-std::string execCommand(const std::string& cmd) {
-    std::string result;
-    char buffer[128];
-    FILE* pipe = _popen(cmd.c_str(), "r");
-    if (!pipe) return "ERROR";
-
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
-    }
-
-    _pclose(pipe);
-    return result;
-}
-
-std::vector<std::string> splitByLine(const std::string& input) {
-    std::vector<std::string> lines;
-    std::stringstream ss(input);
-    std::string line;
-    while (std::getline(ss, line)) {
-        if (!line.empty()) lines.push_back(line);
-    }
-    return lines;
-}
-
-//all rclone operation functions here
-
-void returnEnter(){
+void returnEnter()
+{
     std::cout << "\n";
     std::cout << "\r" << "Press Enter to return to the option menu...";
     bool lock = 1;
-    while (lock) {
-        if (_kbhit()) {
+    while (lock)
+    {
+        if (_kbhit())
+        {
             char askedInput = _getch();
-            if (askedInput == 13) {
-                lock = 0; 
+            if (askedInput == 13)
+            {
+                lock = 0;
             }
         }
     }
 }
 
-void cleanedBufferReturn(){
+void cleanedBufferReturn()
+{
     std::cout << "\r" << "Press enter to return to the option menu...";
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    std::cin.get(); 
+    std::cin.get();
 }
 
-void remoteList(){
-    std::cout << "\n";
-    std::cout << "\r" << "-- Remote list (parsed testing) --" << "\n";
-
+// Remote names parsing and index building
+std::vector<std::string> getRemoteList()
+{
     std::string output = execCommand("rclone listremotes");
-    if (output == "ERROR") {
-        std::cout << "\r" << "Failed to run rclone listremotes." << "\n";
+    return output == "ERROR" ? std::vector<std::string>{} : splitByLine(output);
+}
+
+void printIndexedList(const std::vector<std::string> &remotes)
+{
+    int index = 1;
+    for (const auto &name : remotes)
+    {
+        std::cout << "\r[" << index++ << "] " << name << "\n";
+    }
+}
+
+void remoteList()
+{
+    std::cout << "\n-- Remote list --\n";
+    auto remotes = getRemoteList();
+    if (remotes.empty())
+    {
+        std::cout << "\rNo remotes found.\n";
         return;
     }
-
-    std::vector<std::string> remotes = splitByLine(output);
-    if (remotes.empty()) {
-        std::cout << "\r" << "No remotes found." << "\n";
-    } else {
-        for (const auto& remote : remotes) {
-            std::cout << "\r" << remote << "\n";
-        }
-    }
+    printIndexedList(remotes);
 }
 
-void remoteConfig(){
+void remoteConfig()
+{
     std::this_thread::sleep_for(std::chrono::microseconds(500));
     system("start cmd /c rclone config");
 }
 
-void viewRemote(){
+void viewRemote()
+{
     remoteList();
     returnEnter();
 }
 
-int mountSelect(int& mountInput) {
-    if (!(std::cin >> mountInput)) {
-        std::cin.clear(); 
-        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-        return 0;
+// Detect currently used drive letters
+std::vector<char> getUsedDriveLetters()
+{
+    std::vector<char> used;
+    DWORD drives = GetLogicalDrives();
+    for (int i = 0; i < 26; ++i)
+    {
+        if (drives & (1 << i))
+        {
+            used.push_back('A' + i);
+        }
     }
-
-    // Clear input buffer
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    return mountInput;
+    return used;
 }
 
-void mount(){
-    remoteList();
-    std::this_thread::sleep_for(std::chrono::microseconds(500));
-    unsigned int corresWidth = 18;
-    std::cout << std::left;
-    std::cout << "\r" << tabLength << "Warning: Invalid input will not work." << "\n\n";
-    std::string remoteName;
-    std::string driveLetter;
-    std::cout << "\r" << std::setw(corresWidth) << "Remote name: " << "| ";
-    std::cin >> remoteName;
-    std::cout << "\r" <<  std::setw(corresWidth) << "Drive letter: " << "| ";
-    std::cin >> driveLetter;
-    std::string mountCommandJoint = "start /B cmd /c rclone mount " + remoteName + " " + driveLetter + " --vfs-cache-mode full > NUL 2>&1";
+// Prompt for available drive letter (returns '\0' if cancelled)
+char getAvailableDriveLetter()
+{
+    auto used = getUsedDriveLetters();
+
+    std::cout << "\nDrive letters currently in use: ";
+    for (char c : used)
+        std::cout << c << ": ";
+    std::cout << "\nPress a letter (A-Z) to mount, or ESC to cancel: ";
+
+    while (true)
+    {
+        char key = _getch();
+        if (key == 27)
+            return '\0'; // ESC
+        key = std::toupper(key);
+
+        if (key >= 'A' && key <= 'Z')
+        {
+            if (std::find(used.begin(), used.end(), key) != used.end())
+            {
+                std::cout << "\rDrive " << key << ": is already in use. Try another: ";
+            }
+            else
+            {
+                std::cout << "\nUsing drive " << key << ":\\\n";
+                return key;
+            }
+        }
+    }
+}
+
+// Select a remote index (returns -1 if ESC)
+int selectRemoteIndex(const std::vector<std::string> &remotes)
+{
+    printIndexedList(remotes);
+    std::cout << "\nSelect a remote (1-" << remotes.size() << ", ESC to cancel): ";
+
+    while (true)
+    {
+        char key = _getch();
+        if (key == 27)
+            return -1;
+        int choice = key - '0';
+        if (choice >= 1 && choice <= remotes.size())
+        {
+            return choice - 1;
+        }
+        else
+        {
+            std::cout << "\rInvalid choice. Try again: ";
+        }
+    }
+}
+
+void mount()
+{
+    auto remotes = getRemoteList();
+    if (remotes.empty())
+    {
+        std::cout << "\rNo remotes found.\n";
+        return;
+    }
+    int selectedIndex = selectRemoteIndex(remotes);
+    if (selectedIndex == -1)
+    {
+        std::cout << "\nCancelled.\n";
+        return;
+    }
+    std::string selectedRemote = remotes[selectedIndex];
+    char driveLetter = getAvailableDriveLetter();
+    if (driveLetter == '\0')
+    {
+        std::cout << "\nMount cancelled.\n";
+        return;
+    }
+    std::string mountCommandJoint = "start /B cmd /c rclone mount " +
+                                    selectedRemote + " " + driveLetter + ":\\ --vfs-cache-mode full > NUL 2>&1";
     system(mountCommandJoint.c_str());
-    remoteName.erase(remoteName.size() - 1);
-    std::cout << "\r" <<  remoteName << " (" << driveLetter << ") has been mounted." << "\n" << "\n";
-    millisecsDelay(1000);
-    cleanedBufferReturn();
-}
-
-void sync(){
-    std::string sourceName;
-    std::string destinationName;
-    std::string selectSync;
-    remoteList();
+    system("cls");
+    std::cout << "\r" << selectedRemote << " (" << driveLetter << ":\\) has been mounted.\n\n";
     millisecsDelay(500);
-    std::cout << "\n" << "\r" << "Source name: ";
-    std::cin >> sourceName;
-    std::cout << "\r" << "Destination name: ";
-    std::cin >> destinationName;
-    std::this_thread::sleep_for(std::chrono::microseconds(500));
-    std::string viewProgress = R"(
-    Run in background? (You will not know the status of the syncing operation.)
-    Yes/No/Cancel [Y/N]: )";
-    std::cout << "\r" << viewProgress;
-    std::cin >> selectSync;
-    if (selectSync == "yes" || selectSync == "Y" || selectSync == "y" || selectSync == "Yes"){
-        std::string syncCommandJoint = "start /B cmd /c rclone sync " + sourceName + " " + destinationName + " -P" + " > NUL 2>&1";
-        system(syncCommandJoint.c_str());
-        millisecsDelay(100);
-        std::cout << "\r" << "Operation has started in background." << '\n';
-    }
-    else if (selectSync == "no" || selectSync == "n" || selectSync == "N" || selectSync == "No"){
-        std::string syncCommandJoint = "start cmd /c rclone sync " + sourceName + " " + destinationName + " -P";
-        int syncWindow = system(syncCommandJoint.c_str());
-        millisecsDelay(100);
-        std::cout << "\r" << "Operation has started." << '\n';
-        millisecsDelay(4000);
-        std::cout << "\r" << "If the command window closed instantly, the syncing operation has failed." << '\n';
-    }
-    else {
-        std::cout << "\r" << "Sync operation cancelled." << '\n';
-    }
-    cleanedBufferReturn();
-    
+    returnEnter();
 }
 
-void ver(){
+void sync()
+{
+    auto remotes = getRemoteList();
+    if (remotes.size() < 2)
+    {
+        std::cout << "\rYou must have at least 2 remotes to perform a sync.\n";
+        return;
+    }
+    std::cout << "\n-- Select Source Remote --\n";
+    int sourceIndex = selectRemoteIndex(remotes);
+    if (sourceIndex == -1)
+    {
+        std::cout << "\nCancelled.\n";
+        return;
+    }
+    std::cout << "\n-- Select Destination Remote --\n";
+    int destIndex = selectRemoteIndex(remotes);
+    if (destIndex == -1)
+    {
+        std::cout << "\nCancelled.\n";
+        return;
+    }
+    std::string sourceName = remotes[sourceIndex];
+    std::string destinationName = remotes[destIndex];
+    std::string confirmMessage = R"(
+    Run in background?
+    Press ENTER to run in background
+    Press ESC to cancel
+    Press any other key to run in a new CMD window.
+    )";
+    std::cout << "\n"
+              << confirmMessage;
+    char choice = _getch();
+    if (choice == 27) //ESC key
+    {
+        std::cout << "\rSync operation cancelled.\n";
+        return;
+    }
+    else if (choice == 13) //Enter key
+    {
+        std::string syncCommandJoint = "start /B cmd /c rclone sync " + sourceName + " " + destinationName + "> NUL 2>&1";
+        system(syncCommandJoint.c_str());
+        std::cout << "\rOperation has started in background.\n";
+    }
+    else
+    {
+        std::string syncCommandJoint = "start cmd /c rclone sync " + sourceName + " " + destinationName + " -P";
+        system(syncCommandJoint.c_str());
+        std::cout << "\rOperation has started.\n";
+    }
+
+    returnEnter();
+}
+
+void ver()
+{
     std::cout << "\n";
     system("rclone --version");
     returnEnter();
 }
 
-void taskTerminate(){
-    bool validOption = false;
+void taskTerminate()
+{
     std::string confirmationMsg = R"(
     All running operations will be terminated. Make sure not to halt any important things.
-    Type Yes (Y) to confirm: )";
-    std::string confirmationInput;
-    std::cout << '\n' << confirmationMsg;
-    std::cin >> confirmationInput;
-    std::cin.ignore();
-    if (confirmationInput == "yes" || confirmationInput == "Y" || confirmationInput == "y" || confirmationInput == "Yes"){
-        validOption = true;
-        system("taskkill /IM rclone.exe /F");
-        returnEnter();
-    }
-    else{
-        std::cout << "\r" << "Cancelled." << '\n';
-        millisecsDelay(2000);
+    Press ENTER to confirm or ESC to cancel...
+    )";
+    std::cout << '\n'
+              << confirmationMsg;
+    while (true)
+    {
+        char input = _getch();
+        if (input == 13)
+        { // ENTER
+            system("taskkill /IM rclone.exe /F > NUL 2>&1");
+            std::cout << "\rAll rclone tasks have been terminated.\n";
+            returnEnter();
+            break;
+        }
+        else if (input == 27)
+        { // ESC
+            std::cout << "\rCancelled.\n";
+            millisecsDelay(2000);
+            break;
+        }
     }
 }
-    
 
 // input values corresponding to its functions
-int optionExecution(int selectValue){
-    if (selectValue == 1){
+int optionExecution(int selectValue)
+{
+    switch (selectValue)
+    {
+    case 1:
         remoteConfig();
         millisecsDelay(3000);
         return 0;
-    }
-    else if (selectValue == 2){
+    case 2:
         viewRemote();
         millisecsDelay(1000);
         return 0;
-    }
-    else if (selectValue == 3){
+    case 3:
         sync();
         millisecsDelay(500);
         return 0;
-    }
-    else if (selectValue == 4){
+    case 4:
         mount();
         millisecsDelay(500);
         return 0;
-    }
-    else if (selectValue == 5){
+    case 5:
         ver();
         millisecsDelay(500);
         return 0;
-    }
-    else if (selectValue == 6){
+    case 6:
         taskTerminate();
         millisecsDelay(500);
         return 0;
-    }
-    else if (selectValue == 27){ // number 27 corresponds to the ESC key in the ASCII table, which in this case was pressed when asked for an option.
+    case 27: // ESC key
         return -1;
-    }
-    else if (selectValue == 0){
+    case 0:
         return 0;
+    default:
+        return -1;
     }
 }
 
-int main(){
+int main()
+{
     loop = true;
-    int returnedOption;
-    int fileExists = check4rclone();
-    while (loop){
+    bool presence = check4rclone();
+    while (loop)
+    {
         int returnedOption;
-        if(fileExists == 0){
-            returnedOption = provideOptions(fileExists);
+        if (presence)
+        {
+            returnedOption = provideOptions();
         }
-        else{
+        else
+        {
             loop = false;
-            millisecsDelay(3000);
+            millisecsDelay(2000);
         }
         int optionExecDone;
         optionExecDone = optionExecution(returnedOption);
-        if (optionExecDone == -1){
+        if (optionExecDone == -1)
+        {
             loop = false;
         }
-        else if (optionExecDone == 0){
+        else if (optionExecDone == 0)
+        {
             system("cls");
         }
-
     }
     system("cls");
-    std::cout << "\r\n" << "Program will exit..." << "\n";
+    std::cout << "\r\n"
+              << "Exiting..." << "\n";
     millisecsDelay(1000);
     return 0;
 }
-
-
