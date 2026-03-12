@@ -1,4 +1,4 @@
-# Rclone Basic Input Utility by LiamKhoi
+# Rclone Basic Input Utility
 
 A basic CLI program to facilitate a few common rclone functionalities without the need to write full commands within rclone's directory. 
 
