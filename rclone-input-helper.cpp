@@ -11,9 +11,14 @@
 #include <cctype>
 #include <Windows.h>
 #include <algorithm>
+#include <fstream>
 
 bool loop;
 std::string tabLength = "    ";
+
+// presence bool is called on top due to further use of functions outside int main
+bool rclonePresence = 0;
+bool winfspPresence = 0;
 
 std::string execCommand(const std::string &cmd)
 {
@@ -53,9 +58,10 @@ std::vector<std::string> splitByLine(const std::string &input)
 void disclaimer()
 {
     std::string note = R"(
-         **NOTE** 
+         **NOTICE**
+ 
     - This program is developed for basic personal use and does not modify the rclone software.
-    - Be careful with inputs, may lead to serious consequences from wrong executions.
+    - Even if program offers fail-safe mechanisms, it is not a replacement for Rclone config.
     - Program is currently limited in functionalities and inconsistent code structure. 
     - Would be happy to receive contributions. Thank you! <3
           )";
@@ -82,10 +88,19 @@ bool check4rclone()
     }
 }
 
+bool check4WinFSP()
+{
+    const std::string winfspDLL =
+        "C:\\Program Files (x86)\\WinFsp\\bin\\winfsp-x64.dll";
+
+    bool result = std::filesystem::exists(winfspDLL);
+    return result;
+}
+
 int provideOptions()
 {
     std::cout << "\r\n"
-              << "    - rclone basic input utility v.1.0 by LiamKhoi -    " << "\n";
+              << "    - rclone basic input utility v.1.0 -    " << "\n";
     unsigned int corresWidth = 8;
     std::cout << std::left;
     std::cout << tabLength << std::setw(corresWidth) << "[1]" << "Run remote config" << "\n";
@@ -97,6 +112,13 @@ int provideOptions()
     std::cout << tabLength << std::setw(corresWidth) << "[ESC]" << "Quit" << "\n";
 
     std::string ask4option = R"(Press the corresponding key to select)";
+
+    if (!winfspPresence)
+    {
+        std::cout << "\nWarning: WinFSP not detected in machine.\n";
+        std::cout << "Mounting functionality will be unavailable.\n\n";
+    }
+
     std::cout << "\n"
               << ask4option << std::flush;
     char optionSelect = _getch();
@@ -156,6 +178,48 @@ void printIndexedList(const std::vector<std::string> &remotes)
     }
 }
 
+int selectRemotePagedIndex(const std::vector<std::string> &remotes)
+{
+    const int pageSize = 9;
+    int totalPages = (remotes.size() + pageSize - 1) / pageSize;
+    int currentPage = 0;
+    while (true)
+    {
+        system("cls");
+        std::cout << "-- Select a Remote (Page " << (currentPage + 1) << "/" << totalPages << ") --\n";
+
+        int baseIndex = currentPage * pageSize;
+        for (int i = 0; i < pageSize; ++i)
+        {
+            int remoteIndex = baseIndex + i;
+            if (remoteIndex >= remotes.size())
+                break;
+            std::cout << "[" << (i + 1) << "] " << remotes[remoteIndex] << "\n";
+        }
+        std::cout << "\nUse < or > to move to next/previous page, 1-9 to select, or ESC to cancel.";
+        char key = _getch();
+        if (key == 27)
+            return -1; // ESC
+        else if (key == '<' || key == ',')
+        {
+            if (currentPage > 0)
+                --currentPage;
+        }
+        else if (key == '>' || key == '.')
+        {
+            if (currentPage < totalPages - 1)
+                ++currentPage;
+        }
+        else if (key >= '1' && key <= '9')
+        {
+            int offset = key - '1';
+            int selectedIndex = baseIndex + offset;
+            if (selectedIndex < remotes.size())
+                return selectedIndex;
+        }
+    }
+}
+
 void remoteList()
 {
     std::cout << "\n-- Remote list --\n";
@@ -199,12 +263,10 @@ std::vector<char> getUsedDriveLetters()
 char getAvailableDriveLetter()
 {
     auto used = getUsedDriveLetters();
-
     std::cout << "\nDrive letters currently in use: ";
     for (char c : used)
         std::cout << c << ": ";
     std::cout << "\nPress a letter (A-Z) to mount, or ESC to cancel: ";
-
     while (true)
     {
         char key = _getch();
@@ -230,28 +292,19 @@ char getAvailableDriveLetter()
 // Select a remote index (returns -1 if ESC)
 int selectRemoteIndex(const std::vector<std::string> &remotes)
 {
-    printIndexedList(remotes);
-    std::cout << "\nSelect a remote (1-" << remotes.size() << ", ESC to cancel): ";
-
-    while (true)
-    {
-        char key = _getch();
-        if (key == 27)
-            return -1;
-        int choice = key - '0';
-        if (choice >= 1 && choice <= remotes.size())
-        {
-            return choice - 1;
-        }
-        else
-        {
-            std::cout << "\rInvalid choice. Try again: ";
-        }
-    }
+    return selectRemotePagedIndex(remotes);
 }
 
 void mount()
 {
+    if (!winfspPresence)
+    {
+        std::cout << "\nMounting is unavailable because WinFSP is not found.\n";
+        std::cout << "\nTo use this function, please install WinFSP.\n";
+        returnEnter();
+        return;
+    }
+
     auto remotes = getRemoteList();
     if (remotes.empty())
     {
@@ -313,12 +366,12 @@ void sync()
     std::cout << "\n"
               << confirmMessage;
     char choice = _getch();
-    if (choice == 27) //ESC key
+    if (choice == 27) // ESC key
     {
         std::cout << "\rSync operation cancelled.\n";
         return;
     }
-    else if (choice == 13) //Enter key
+    else if (choice == 13) // Enter key
     {
         std::string syncCommandJoint = "start /B cmd /c rclone sync " + sourceName + " " + destinationName + "> NUL 2>&1";
         system(syncCommandJoint.c_str());
@@ -409,11 +462,14 @@ int optionExecution(int selectValue)
 int main()
 {
     loop = true;
-    bool presence = check4rclone();
+    rclonePresence = check4rclone();
+    if (rclonePresence)
+    {
+    }
     while (loop)
     {
         int returnedOption;
-        if (presence)
+        if (rclonePresence)
         {
             returnedOption = provideOptions();
         }
